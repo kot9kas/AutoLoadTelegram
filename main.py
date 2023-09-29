@@ -1,152 +1,161 @@
-import logging
-from telethon import TelegramClient, events, Button
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils import executor
+from db import initialize
+from datetime import datetime
+from logic import add_user, check_user_rules_accepted, set_accepted_rules, add_file_info, get_user_by_file_id, add_user, add_file, get_file_info_by_record
 
-logging.basicConfig(format='[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s', level=logging.WARNING)
+TOKEN = 'бла бла бла' #токен бота
+ADMIN_ID = '1234567' #ваш телеграм ид
 
-api_id = '****' # Тут api с сайта https://my.telegram.org/apps
-api_hash = '***' # тут хеш с того же сайта
-bot_token = '***' # Тут ваш токен бота
-admin_user_id = ****  # Замените на ваш user ID
+CHECK_EMOJI = "✅"
+CROSS_EMOJI = "❌"
 
-client = TelegramClient('bot', api_id, api_hash).start(bot_token=bot_token)
+bot = Bot(token=TOKEN)
+dp = Dispatcher(bot)
 
-# Хранение данных о сессиях и пользователях
-sessions = {}
-users = {}
-awaiting_comment = False
+user_categories = {}
 
+@dp.message_handler(commands=['start'])
+async def on_start(message: types.Message):
+    user_id = message.from_user.id
+    await add_user(user_id)
+    rules_accepted = await check_user_rules_accepted(user_id)
 
-@client.on(events.NewMessage(pattern='/start'))
-async def start(event):
-    try:
-        await event.respond('Выберите действие:', buttons=[
-            [Button.text('Поддержка')],
-            [Button.text('Загрузить файлы')],
-            [Button.text('Личный кабинет')]
-        ])
-    except Exception as e:
-        logging.error(f"Error in start: {e}")
+    if not rules_accepted:
+        keyboard = InlineKeyboardMarkup()
+        btn_accept = InlineKeyboardButton(text="Принять правила", callback_data="accept_rules")
+        btn_decline = InlineKeyboardButton(text="Отклонить правила", callback_data="decline_rules")
+        keyboard.add(btn_accept, btn_decline)
+        await message.answer("Пожалуйста, примите правила, чтобы продолжить.", reply_markup=keyboard)
+    else:
+        await show_main_menu(message, user_id)
 
+async def show_main_menu(message, user_id):
+    markup = InlineKeyboardMarkup(row_width=2)
+    item1 = InlineKeyboardButton("Загрузить файл", callback_data="upload_file")
+    # Добавьте другие кнопки для главного меню по аналогии
+    markup.add(item1)
 
-@client.on(events.NewMessage(pattern='Поддержка'))
-async def support(event):
-    try:
-        await event.respond('За поддержкой писать сюда: @kot9k.')
-    except Exception as e:
-        logging.error(f"Error in support: {e}")
-
-
-@client.on(events.NewMessage(pattern='Загрузить файлы'))
-async def upload_files(event):
-    try:
-        await event.respond('Пожалуйста, отправьте файлы.')
-    except Exception as e:
-        logging.error(f"Error in upload_files: {e}")
-
-
-@client.on(events.NewMessage(pattern='Личный кабинет'))
-async def personal_cabinet(event):
-    user_id = event.sender_id
-    if user_id not in users:
-        users[user_id] = {
-            'files_uploaded': 0,
-            'balance': 0,
-            'registration_date': event.date.strftime('%Y-%m-%d')
-        }
-    user_info = users[user_id]
-    response = f"📁 Загруженные файлы: {user_info['files_uploaded']}\n" \
-               f"💰 Баланс: {user_info['balance']} руб.\n" \
-               f"📅 Дата регистрации: {user_info['registration_date']}"
-    await event.respond(response)
+    await bot.send_message(
+        message.chat.id,
+        f"Выберите опцию:",
+        reply_markup=markup
+    )
 
 
-@client.on(events.NewMessage())
-async def handle_files(event):
-    try:
-        if event.message.media:
-            user_id = event.sender_id
-            if user_id not in users:
-                users[user_id] = {
-                    'files_uploaded': 0,
-                    'balance': 0,
-                    'registration_date': event.date.strftime('%Y-%m-%d')
-                }
-            users[user_id]['files_uploaded'] += 1
+@dp.callback_query_handler(lambda c: c.data == "accept_rules")
+async def rules_accepted(callback_query: types.CallbackQuery):
+    await set_accepted_rules(callback_query.from_user.id)
+    await bot.answer_callback_query(callback_query.id)
+    await show_main_menu(callback_query.message, callback_query.from_user.id)
+    
+# Обработчик для получения файла
+# Глобальные переменные для хранения выбора пользователя
+user_categories = {}
 
-            sessions[event.message.id] = {
-                'user_id': event.sender_id,
-                'file': event.message.media,
-                'status': 'open'
-            }
-            # Пересылаем файл администратору
-            await client.forward_messages(admin_user_id, event.message)
-            await client.send_message(admin_user_id, 'Новый файл получен!', buttons=[
-                [Button.text('Принять')],
-                [Button.text('Отклонить')],
-                [Button.text('Написать комментарий')],
-                [Button.text('Закрыть')]
-            ])
-    except Exception as e:
-        logging.error(f"Error in handle_files: {e}")
+@dp.message_handler(content_types=types.ContentType.DOCUMENT)
+async def handle_document(message: types.Message):
+    # Сохранить file_id в базе данных
+    file_id = message.document.file_id
+    file_record_id = add_file(message.from_user.id, file_id)
 
-@client.on(events.NewMessage(pattern='Принять'))
-async def accept_file(event):
-    try:
-        session = list(sessions.values())[-1]
-        await client.send_message(session['user_id'], 'Ваши файлы были приняты!')
-        session['status'] = 'accepted'
-    except Exception as e:
-        logging.error(f"Error in accept_file: {e}")
+    # Создание клавиатуры с категориями и галочками/крестиками
+    markup = InlineKeyboardMarkup(row_width=2)
 
-@client.on(events.NewMessage(pattern='Отклонить'))
-async def reject_file(event):
-    try:
-        session = list(sessions.values())[-1]
-        await client.send_message(session['user_id'], 'Ваши файлы были отклонены.')
-        session['status'] = 'rejected'
-    except Exception as e:
-        logging.error(f"Error in reject_file: {e}")
+    categories = ["Steam", "Origin", "Epic Games"]
+    user_categories[message.from_user.id] = []
 
-@client.on(events.NewMessage(pattern='Написать комментарий'))
-async def comment_file(event):
-    global awaiting_comment
-    try:
-        if event.sender_id == admin_user_id:
-            awaiting_comment = True
-            await event.respond('Пожалуйста, введите ваш комментарий.')
-    except Exception as e:
-        logging.error(f"Error in comment_file: {e}")
+    for category in categories:
+        markup.add(InlineKeyboardButton(f"{CROSS_EMOJI} {category}", callback_data=f"toggle_{category}_{file_record_id}"))
 
-@client.on(events.NewMessage())
-async def handle_comment(event):
-    global awaiting_comment
-    try:
-        if awaiting_comment and event.sender_id == admin_user_id and sessions:
-            session = list(sessions.values())[-1]
-            await client.send_message(session['user_id'], f'Комментарий к вашим файлам: {event.message.text}')
-            session['status'] = 'commented'
-            awaiting_comment = False
-    except Exception as e:
-        logging.error(f"Error in handle_comment: {e}")
+    markup.add(InlineKeyboardButton("Отправить администратору", callback_data=f"send_{file_record_id}"))
 
-@client.on(events.NewMessage(pattern='Закрыть'))
-async def close_session(event):
-    try:
-        if sessions:
-            session = list(sessions.values())[-1]
-            session['status'] = 'closed'
-    except Exception as e:
-        logging.error(f"Error in close_session: {e}")
+    await bot.send_message(message.from_user.id, "Выберите категории для файла:", reply_markup=markup)
 
-@client.on(events.NewMessage(pattern='/admin'))
-async def admin_panel(event):
-    try:
-        if event.sender_id == admin_user_id:
-            total_users = len(set([session['user_id'] for session in sessions.values()]))
-            open_sessions = sum(1 for session in sessions.values() if session['status'] == 'open')
-            closed_sessions = sum(1 for session in sessions.values() if session['status'] == 'closed')
-            await event.respond(f'Общее количество пользователей: {total_users}\nОткрытые сессии: {open_sessions}\nЗакрытые сессии: {closed_sessions}')
-    except Exception as e:
-        logging.error(f"Error in admin_panel: {e}")
+@dp.callback_query_handler(lambda c: c.data.startswith("toggle_"))
+async def toggle_category(callback_query: types.CallbackQuery):
+    data = callback_query.data.split("_")
+    category, file_record_id = data[1], data[2]
+    user_id = callback_query.from_user.id
 
-client.run_until_disconnected()
+    # Обновляем список выбранных категорий пользователя
+    if category in user_categories[user_id]:
+        user_categories[user_id].remove(category)
+    else:
+        user_categories[user_id].append(category)
+
+    # Обновляем клавиатуру с выбранными категориями
+    markup = InlineKeyboardMarkup(row_width=2)
+    categories = ["Steam", "Origin", "Epic Games"]
+    for cat in categories:
+        if cat in user_categories[user_id]:
+            markup.add(InlineKeyboardButton(f"{CHECK_EMOJI} {cat}", callback_data=f"toggle_{cat}_{file_record_id}"))
+        else:
+            markup.add(InlineKeyboardButton(f"{CROSS_EMOJI} {cat}", callback_data=f"toggle_{cat}_{file_record_id}"))
+
+    markup.add(InlineKeyboardButton("Отправить администратору", callback_data=f"send_{file_record_id}"))
+
+    await bot.edit_message_reply_markup(callback_query.message.chat.id, callback_query.message.message_id, reply_markup=markup)
+
+@dp.callback_query_handler(lambda c: 'empty_' in c.data)
+async def handle_empty(callback_query: types.CallbackQuery):
+    file_id = callback_query.data.split('_')[1]
+    user_id = await get_user_by_file_id(file_id)
+    
+    if user_id:
+        await bot.send_message(user_id, f"Ваш отправленный файл {file_id} пустой.")
+
+@dp.callback_query_handler(lambda c: c.data == "decline_rules")
+async def rules_declined(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, "Вы должны принять правила, чтобы использовать этого бота.")
+
+
+# Пока что этот обработчик просто выводит информационное сообщение, но вы можете добавить логику пополнения баланса.
+@dp.callback_query_handler(lambda c: 'balance_' in c.data)
+async def handle_balance(callback_query: types.CallbackQuery):
+    file_id = callback_query.data.split('_')[1]
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, f"Баланс за файл {file_id} начислен.")
+
+@dp.callback_query_handler(lambda c: c.data == "upload_file")
+async def prompt_for_file(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, "Пожалуйста, отправьте файл.")
+
+# Обработчик для отправки файла администратору
+@dp.callback_query_handler(lambda c: c.data.startswith("send_"))
+async def send_to_admin(callback_query: types.CallbackQuery):
+    data = callback_query.data.split("_")
+    file_record_id = data[1]
+    user_id = callback_query.from_user.id
+    categories_selected = user_categories.get(user_id, [])
+
+    # Получите информацию о файле из базы данных
+    file_info = await get_file_info_by_record(file_record_id)
+    markup = InlineKeyboardMarkup(row_width=2)
+    btn_balance = InlineKeyboardButton(text="Начислить баланс", callback_data=f"balance_{file_record_id}")
+    btn_empty = InlineKeyboardButton(text="Пустой", callback_data=f"empty_{file_record_id}")
+
+    if file_info:
+        file_path = file_info['telegram_file_id']
+
+        # Отправьте файл администратору
+        await bot.send_document(ADMIN_ID, file_path, caption=f"Файл от пользователя @{callback_query.from_user.username}, Категории: {', '.join(categories_selected)}. File ID: {file_record_id}", reply_markup=markup.add(btn_balance, btn_empty))
+
+        # Отправьте подтверждение пользователю
+        await bot.send_message(user_id, f"Ваш файл под номером {file_record_id} был отправлен администратору!")
+
+        markup = InlineKeyboardMarkup(row_width=2)
+        btn_balance = InlineKeyboardButton(text="Начислить баланс", callback_data=f"balance_{file_record_id}")
+        markup.add(btn_balance)
+
+    else:
+        await bot.send_message(user_id, f"Извините, произошла ошибка. Файл с номером {file_record_id} не найден.")
+
+# Запуск бота
+initialize()
+if __name__ == '__main__':
+    from aiogram import executor
+    executor.start_polling(dp, skip_updates=True)
