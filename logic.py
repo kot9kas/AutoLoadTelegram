@@ -71,3 +71,46 @@ async def add_user(user_id):
         cursor = conn.cursor()
         cursor.execute("INSERT OR IGNORE INTO users (user_id, registration_date) VALUES (?, ?)", (user_id, registration_date))
         conn.commit()
+def add_balance(user_id: int, amount: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    # Начисляем баланс
+    cursor.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (amount, user_id))
+
+    conn.commit()
+    conn.close()
+def get_user_balance(user_id: int) -> int:
+    # Подключаемся к вашей базе данных
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    
+    conn.close()
+    
+    if result:
+        return result[0]
+    else:
+        return 0  # предполагаем, что если пользователя нет в базе данных, его баланс равен 0
+
+async def get_registration_date(user_id):
+    with closing(sqlite3.connect(DB_NAME)) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT registration_date FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        if result:
+            return result[0]
+    return None
+def set_user_rating(user_id, rating):
+    with closing(sqlite3.connect(DB_NAME)) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET rating = ? WHERE user_id = ?", (rating, user_id))
+        conn.commit()
+
+def get_user_rating(user_id):
+    with closing(sqlite3.connect(DB_NAME)) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT rating FROM users WHERE user_id = ?", (user_id,))
+        return cursor.fetchone()[0]

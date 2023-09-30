@@ -11,7 +11,8 @@ def initialize():
                 accepted_rules BOOLEAN DEFAULT FALSE,
                 balance INTEGER DEFAULT 0,
                 registration_date DATE DEFAULT CURRENT_TIMESTAMP,
-                files_submitted_count INTEGER DEFAULT 0
+                files_submitted_count INTEGER DEFAULT 0,
+                rating INTEGER DEFAULT 0
             )
         """)
     cursor.execute('''
