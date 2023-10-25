@@ -70,7 +70,7 @@ async def show_main_menu(message, user_id):
     markup = InlineKeyboardMarkup(row_width=2)
     item1 = InlineKeyboardButton("Загрузить файл", callback_data="upload_file")
     item2 = InlineKeyboardButton("Баланс", callback_data="check_balance")
-    item3 = InlineKeyboardButton("Помощь", callback_data="help")
+    item3 = InlineKeyboardButton("Помощь", callback_data="get_help")
     markup.add(item1, item2, item3)
 
     full_message = greeting + "Выберите опцию:"
